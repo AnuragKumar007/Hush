@@ -44,6 +44,7 @@ app.get('/api/rooms/:id', (req, res) => {
 
 // Initialize Socket.io
 const io = socketIo(server, {
+  maxHttpBufferSize: 1e7, // 10MB limit for base64 image data URLs
   cors: {
     origin: clientUrl,
     methods: ['GET', 'POST'],

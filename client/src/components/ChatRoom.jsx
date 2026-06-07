@@ -223,8 +223,8 @@ export default function ChatRoom({ roomId, username, onLeave }) {
     const file = e.target.files[0];
     if (!file) return;
     
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('Image must be under 2MB', 'error');
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Image must be under 5MB', 'error');
       return;
     }
 
