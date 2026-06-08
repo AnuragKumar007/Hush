@@ -78,9 +78,9 @@ module.exports = function (io) {
         return; // ignore empty messages
       }
 
-      // Safe length check (~3.5MB to support encrypted base64 images)
-      if (text.length > 3500000) {
-        return socket.emit('error', 'Payload too large. Maximum 2MB allowed.');
+      // Safe length check (~7.5MB characters to support larger/fallback base64 images)
+      if (text.length > 7500000) {
+        return socket.emit('error', 'Payload too large. Maximum 5MB allowed.');
       }
       
       const cleanText = text;

@@ -219,39 +219,82 @@ export default function ChatRoom({ roomId, username, onLeave }) {
     }
   };
 
-  const handleImageUpload = (e) => {
+  const compressImage = (file, maxWidth = 1200, maxHeight = 1200, quality = 0.7) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          try {
+            const dataUrl = canvas.toDataURL('image/webp', quality);
+            resolve(dataUrl);
+          } catch (e) {
+            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+            resolve(dataUrl);
+          }
+        };
+        img.onerror = (err) => reject(err);
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
+  const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     
-    if (file.size > 5 * 1024 * 1024) {
-      showToast('Image must be under 5MB', 'error');
+    if (file.size > 10 * 1024 * 1024) {
+      showToast('Image must be under 10MB', 'error');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      const dataURL = ev.target.result;
-      try {
-        const payload = { type: 'image', data: dataURL };
-        
-        const msgObj = {
-          id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
-          sender: username,
-          payload: payload,
-          timestamp: new Date().toISOString()
-        };
+    try {
+      showToast('Compressing image...', 'success');
+      const dataURL = await compressImage(file);
+      const payload = { type: 'image', data: dataURL };
+      
+      const msgObj = {
+        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+        sender: username,
+        payload: payload,
+        timestamp: new Date().toISOString()
+      };
 
-        if (p2pStatus === 'connected' && webrtcRef.current) {
-          webrtcRef.current.sendMessage(JSON.stringify(msgObj));
-          setFeed(prev => [...prev, { type: 'message', id: msgObj.id, sender: msgObj.sender, text: JSON.stringify(payload), timestamp: msgObj.timestamp }]);
-        } else {
-          socket.emit('send-message', { roomId, text: JSON.stringify(payload) });
-        }
-      } catch (err) {
-        showToast('Failed to send image', 'error');
+      if (p2pStatus === 'connected' && webrtcRef.current) {
+        webrtcRef.current.sendMessage(JSON.stringify(msgObj));
+        setFeed(prev => [...prev, { type: 'message', id: msgObj.id, sender: msgObj.sender, text: JSON.stringify(payload), timestamp: msgObj.timestamp }]);
+      } else {
+        socket.emit('send-message', { roomId, text: JSON.stringify(payload) });
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Compression/Upload error:", err);
+      showToast('Failed to compress or send image', 'error');
+    }
+    
     e.target.value = null; // reset input
   };
 
