@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
-import { Eye, Image as ImageIcon } from 'lucide-react';
+import React from 'react';
 
-export default function MessageBubble({ message, isMe }) {
+export default function MessageBubble({ message, isMe, onImageClick }) {
   const { sender, text, timestamp } = message;
   
   let type = 'text';
@@ -17,16 +16,6 @@ export default function MessageBubble({ message, isMe }) {
     // fallback to text
   }
 
-  const [viewState, setViewState] = useState(type === 'image' ? 'hidden' : 'visible'); // hidden, viewing, burned
-
-  const handleViewImage = () => {
-    if (viewState !== 'hidden') return;
-    setViewState('viewing');
-    setTimeout(() => {
-      setViewState('burned');
-    }, 5000);
-  };
-  
   // Format timestamp (e.g., 14:32)
   const formatTime = (isoString) => {
     try {
@@ -66,20 +55,13 @@ export default function MessageBubble({ message, isMe }) {
             : 'bg-brand-card border border-brand-border text-zinc-200 rounded-bl-sm'
         }`}>
           {type === 'text' && content}
-          {type === 'image' && viewState === 'hidden' && (
-            <button onClick={handleViewImage} className="flex flex-col items-center justify-center p-4 bg-black/20 hover:bg-black/30 rounded-xl cursor-pointer active:scale-95 transition-all w-[150px]">
-              <Eye size={24} className="mb-2" />
-              <span className="text-xs font-bold">Tap to View (5s)</span>
-            </button>
-          )}
-          {type === 'image' && viewState === 'viewing' && (
-             <img src={content} alt="ephemeral" className="max-w-[200px] rounded-xl animate-fade-in" />
-          )}
-          {type === 'image' && viewState === 'burned' && (
-             <div className="flex flex-col items-center justify-center p-4 text-zinc-500/50 w-[150px]">
-               <ImageIcon size={24} className="mb-2 opacity-50" />
-               <span className="text-[10px] italic font-semibold">Burned</span>
-             </div>
+          {type === 'image' && (
+            <img 
+              src={content} 
+              alt="shared" 
+              className="max-w-[200px] rounded-xl cursor-zoom-in hover:brightness-95 active:scale-[0.98] transition-all"
+              onClick={() => onImageClick && onImageClick(content)}
+            />
           )}
         </div>
 

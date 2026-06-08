@@ -37,11 +37,18 @@ export default function ChatRoom({ roomId, username, onLeave }) {
   const [stealthMode, setStealthMode] = useState(() => sessionStorage.getItem('stealthMode') !== 'false');
   const [isLocked, setIsLocked] = useState(() => sessionStorage.getItem('stealthMode') !== 'false');
   const [showSettings, setShowSettings] = useState(false);
+  const [fullScreenImage, setFullScreenImage] = useState(null);
+
+  // Presence & Typing State
+  const [partnerStatus, setPartnerStatus] = useState('offline');
+  const [isPartnerTyping, setIsPartnerTyping] = useState(false);
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const webrtcRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
+  const isTypingRef = useRef(false);
 
   // Trigger custom toast alert
   const showToast = (message, type = 'success') => {
@@ -127,6 +134,27 @@ export default function ChatRoom({ roomId, username, onLeave }) {
         setUsers(updatedUsers);
         setFeed(prev => [...prev, { type: 'notification', id: `join-${Date.now()}-${Math.random()}`, eventType: 'join', text: `${joinedUser} joined the chat`, timestamp: new Date().toISOString() }]);
         
+        // Trigger browser notification if page is not focused
+        if ("Notification" in window && Notification.permission === "granted" && document.visibilityState === "hidden") {
+          const isStealth = sessionStorage.getItem('stealthMode') !== 'false';
+          const title = isStealth ? "Craveable Recipes" : "Hush Room Alert";
+          const options = {
+            body: isStealth 
+              ? "New recipe instructions uploaded. Tap to review." 
+              : `${joinedUser} has entered the room.`,
+            icon: "/favicon.ico"
+          };
+          try {
+            const notification = new Notification(title, options);
+            notification.onclick = () => {
+              window.focus();
+              notification.close();
+            };
+          } catch (e) {
+            console.error("Failed to display notification:", e);
+          }
+        }
+
         // Initiate WebRTC connection when someone joins our room
         if (updatedUsers.length === 2 && webrtcRef.current) {
           const otherUser = updatedUsers.find(u => u.username !== username);
@@ -139,6 +167,7 @@ export default function ChatRoom({ roomId, username, onLeave }) {
       const onUserLeft = ({ username: leftUser, users: updatedUsers }) => {
         setUsers(updatedUsers);
         setFeed(prev => [...prev, { type: 'notification', id: `leave-${Date.now()}-${Math.random()}`, eventType: 'leave', text: `${leftUser} left the chat`, timestamp: new Date().toISOString() }]);
+        setIsPartnerTyping(false); // Reset typing status
       };
 
       const onMessage = async (message) => {
@@ -155,6 +184,18 @@ export default function ChatRoom({ roomId, username, onLeave }) {
         setTimeout(() => { socket.disconnect(); onLeave(); }, 3000);
       };
 
+      const onPartnerTyping = ({ username: typingUser }) => {
+        if (typingUser !== username && isMounted) {
+          setIsPartnerTyping(true);
+        }
+      };
+
+      const onPartnerStopTyping = ({ username: typingUser }) => {
+        if (typingUser !== username && isMounted) {
+          setIsPartnerTyping(false);
+        }
+      };
+
       socket.on('connect', onConnect);
       socket.on('disconnect', onDisconnect);
       socket.on('room-joined', onRoomJoined);
@@ -163,7 +204,14 @@ export default function ChatRoom({ roomId, username, onLeave }) {
       socket.on('message', onMessage);
       socket.on('error', onError);
       socket.on('room-burned', onRoomBurned);
+      socket.on('partner-typing', onPartnerTyping);
+      socket.on('partner-stop-typing', onPartnerStopTyping);
     };
+
+    // Request notification permission
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
 
     initConnection();
 
@@ -182,18 +230,61 @@ export default function ChatRoom({ roomId, username, onLeave }) {
       socket.off('message');
       socket.off('error');
       socket.off('room-burned');
+      socket.off('partner-typing');
+      socket.off('partner-stop-typing');
     };
   }, [roomId, username]);
 
-  // Scroll to bottom whenever feed changes
+  // Presence Status Tracker with reload debounce
+  useEffect(() => {
+    const partner = users.find(u => u.username !== username);
+    if (partner) {
+      setPartnerStatus('online');
+    } else {
+      const timer = setTimeout(() => {
+        setPartnerStatus('offline');
+      }, 3000); // 3-second buffer to handle page reloads smoothly
+      return () => clearTimeout(timer);
+    }
+  }, [users, username]);
+
+  // Scroll to bottom whenever feed or typing status changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [feed]);
+  }, [feed, isPartnerTyping]);
+
+  const handleInputChange = (e) => {
+    const value = e.target.value;
+    setInputText(value);
+
+    if (!isConnected) return;
+
+    if (!isTypingRef.current && value.trim().length > 0) {
+      isTypingRef.current = true;
+      socket.emit('typing', { roomId });
+    }
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
+    typingTimeoutRef.current = setTimeout(() => {
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        socket.emit('stop-typing', { roomId });
+      }
+    }, 1500); // 1.5 seconds of typing inactivity
+  };
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
     const cleanText = inputText.trim();
     if (!cleanText) return;
+
+    // Reset typing status instantly when message is sent
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    if (isTypingRef.current) {
+      isTypingRef.current = false;
+      socket.emit('stop-typing', { roomId });
+    }
 
     try {
       const payload = { type: 'text', content: cleanText };
@@ -371,14 +462,20 @@ export default function ChatRoom({ roomId, username, onLeave }) {
                 <WifiOff size={12} className="text-rose-500 animate-pulse" />
               )}
             </div>
-            {/* Clickable Room ID to copy */}
-            <button 
-              onClick={handleCopyId}
-              className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-brand-accent transition-colors font-mono font-medium active:scale-95"
-            >
-              ID: {roomId}
-              {copiedId ? <Check size={10} className="text-brand-accent" /> : <Copy size={10} />}
-            </button>
+            <div className="flex items-center gap-2 mt-0.5 select-none">
+              <span className="flex items-center gap-1 text-[10px] font-medium text-zinc-400">
+                <span className={`w-1.5 h-1.5 rounded-full ${partnerStatus === 'online' ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse' : 'bg-zinc-500'}`}></span>
+                {partnerStatus === 'online' ? 'Partner Online' : 'Partner Offline'}
+              </span>
+              <span className="text-zinc-600 text-[10px]">•</span>
+              <button 
+                onClick={handleCopyId}
+                className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-brand-accent transition-colors font-mono font-medium active:scale-95"
+              >
+                ID: {roomId}
+                {copiedId ? <Check size={8} className="text-brand-accent" /> : <Copy size={8} />}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -435,6 +532,7 @@ export default function ChatRoom({ roomId, username, onLeave }) {
                 key={item.id} 
                 message={item} 
                 isMe={item.sender === username} 
+                onImageClick={setFullScreenImage}
               />
             );
           } else {
@@ -446,6 +544,16 @@ export default function ChatRoom({ roomId, username, onLeave }) {
             );
           }
         })}
+        {isPartnerTyping && (
+          <div className="flex items-center gap-2 px-4 py-2 text-zinc-500 animate-pulse select-none text-[11px] font-medium">
+            <div className="flex gap-1">
+              <span className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+              <span className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+              <span className="w-1 h-1 bg-zinc-500 rounded-full animate-bounce"></span>
+            </div>
+            <span>Partner is typing...</span>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </main>
 
@@ -475,7 +583,7 @@ export default function ChatRoom({ roomId, username, onLeave }) {
               type="text"
               maxLength={1000}
               value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
+              onChange={handleInputChange}
               placeholder={"Type message..."}
               disabled={!isConnected}
               className="w-full bg-transparent border-0 py-3.5 pl-4 pr-14 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none"
@@ -620,6 +728,39 @@ export default function ChatRoom({ roomId, username, onLeave }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Global Full Screen Image Modal */}
+      {fullScreenImage && (
+        <div 
+          className="fixed inset-0 bg-black/95 backdrop-blur-md z-[200] flex flex-col items-center justify-center p-4"
+          onClick={() => setFullScreenImage(null)}
+        >
+          {/* Close button */}
+          <button 
+            className="absolute top-12 right-6 p-2 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-full transition-all cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setFullScreenImage(null);
+            }}
+          >
+            <X size={24} />
+          </button>
+          
+          {/* Main full-screen image */}
+          <div className="max-w-full max-h-[85vh] flex items-center justify-center relative select-none" onClick={(e) => e.stopPropagation()}>
+            <img 
+              src={fullScreenImage} 
+              alt="full screen" 
+              className="max-w-full max-h-[80vh] object-contain rounded-2xl shadow-2xl" 
+            />
+          </div>
+          
+          {/* Info text */}
+          <span className="text-xs text-zinc-500 mt-4 font-medium select-none">
+            Click anywhere to close
+          </span>
         </div>
       )}
     </div>

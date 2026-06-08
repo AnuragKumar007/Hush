@@ -65,6 +65,21 @@ module.exports = function (io) {
       socket.to(to).emit('webrtc-ice-candidate', { candidate, from: socket.id });
     });
 
+    // Handle typing events
+    socket.on('typing', ({ roomId }) => {
+      const formattedRoomId = roomId ? roomId.trim().toLowerCase() : socket.roomId;
+      if (formattedRoomId) {
+        socket.to(formattedRoomId).emit('partner-typing', { username: socket.username });
+      }
+    });
+
+    socket.on('stop-typing', ({ roomId }) => {
+      const formattedRoomId = roomId ? roomId.trim().toLowerCase() : socket.roomId;
+      if (formattedRoomId) {
+        socket.to(formattedRoomId).emit('partner-stop-typing', { username: socket.username });
+      }
+    });
+
     // Handle sending message
     socket.on('send-message', ({ roomId, text }) => {
       const formattedRoomId = roomId ? roomId.trim().toLowerCase() : socket.roomId;
